@@ -1,11 +1,13 @@
+from __future__ import annotations
+
 from argparse import ArgumentParser
 import sys
 import logging
 
-from . import Ext2Reader
+from .ext2reader import Ext2Reader
 
 
-def main():
+def main() -> Ext2Reader:
     parser = ArgumentParser()
     parser.add_argument("file")
     parser.add_argument("-v", "--verbose", choices=["DEBUG", "INFO", "NONE"], default="NONE")
@@ -26,8 +28,8 @@ def main():
 
         reader.parse()
 
-        print(reader.read_file("/directory/another file.txt"))
+        return reader
 
 
 if __name__ == "__main__":
-    main()
+    r = main()
