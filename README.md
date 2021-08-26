@@ -1,5 +1,11 @@
+# cmd application for interacting with ext2 image
 
+Very lacking implementation of ext2 filesystem "driver"
 
-1. parse superblock
-2. from superblock get the number of groups
-3. parse the groups
+# TODO:
+
+- [x] list directory
+- [x] cat file
+- [ ] respect links
+- [ ] create new directory/file
+- [ ] copy 
