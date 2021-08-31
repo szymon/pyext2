@@ -4,7 +4,7 @@ import math
 import struct
 from pathlib import Path
 
-from typing import BinaryIO, Any
+from typing import BinaryIO, Any, Optional
 
 from bitarray import bitarray
 
@@ -207,3 +207,16 @@ class Ext2Reader:
         assert inode.is_file, "Can only `cat` file inodes"
 
         print(self._read_data_for_inode(inode).decode(), end="")
+
+    def inode_info_command(
+        self, *, path: Optional[str] = None, index: Optional[int] = None
+    ) -> None:
+        assert path is None or index is None
+
+        if path is not None:
+            inode = self._find_inode_for_path(path)
+        else:
+            assert index is not None
+            inode = self.first_group.inode_table[index]
+
+        print(inode)
