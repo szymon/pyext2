@@ -10,7 +10,6 @@ from .parser import InodeInfo
 class DirEntry:
     index: int
     inode_type: int
-    name: str
 
 
 class InodeMode(enum.IntFlag):
@@ -73,7 +72,34 @@ class Inode:
         self.block = info.i_block
 
         self.files: dict[str, DirEntry] = {}
-        self.raw_data = bytes()
+
+    def set_files(self, files: dict[str, DirEntry]) -> None:
+        self.files = files
+
+    def __repr__(self) -> str:
+        result = f"<Inode(size={self.size}, block={self.block}"
+
+        if self.files:
+            result += f", files={self.files})>"
+        else:
+            result += ")>"
+
+        return result
+
+    def __str__(self) -> str:
+        lines = ["Inode"]
+
+        lines.append(f"{self.mode = }")
+        lines.append(f"{self.flags = }")
+        lines.append(f"{self.block_index = }")
+        lines.append(f"{self.size = }")
+        lines.append(f"{self.uid = }")
+        lines.append(f"{self.gid = }")
+        lines.append(f"{self.links_count = }")
+        lines.append(f"{self.blocks = }")
+        lines.append(f"{self.block = }")
+
+        return "\n    ".join(lines)
 
     @property
     def is_file(self) -> bool:

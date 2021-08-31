@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import logging
 import math
 import struct
+from pathlib import Path
 
-from typing import Optional, BinaryIO, Any
+from typing import BinaryIO, Any
 
 from bitarray import bitarray
 
@@ -13,6 +13,10 @@ from .parser import SuperBlockInfo, BlockGroupDescriptionInfo
 
 
 class SuperBlock:
+    EXT2_BAD_INO = 1
+    EXT2_ROOT_INO = 2
+    EXT2_GOOD_OLD_FIRST_INO = 11
+
     def __init__(self, data: bytes):
         info = SuperBlockInfo(data)
 
@@ -28,6 +32,8 @@ class SuperBlock:
 
         self.nb_block_groups = int(math.ceil(self.blocks_count / self.blocks_per_group))
 
+        self.first_inode = info.s_first_ino
+
 
 class BlockGroupDescription:
     def __init__(self, data: bytes):
@@ -39,10 +45,10 @@ class BlockGroupDescription:
 
 class BlockBitmap:
     def __init__(self, data: bytes):
-        self.data = bitarray()
+        self.data = bitarray(endian="little")
         self.data.frombytes(data)
 
-    def __getitem__(self, idx: int) -> Any:
+    def __getitem__(self, idx: int | slice) -> Any:
         return self.data[idx]
 
     def __len__(self) -> int:
@@ -51,88 +57,58 @@ class BlockBitmap:
 
 class InodeBitmap:
     def __init__(self, data: bytes):
-        self.data = bitarray()
+        self.data = bitarray(endian="little")
         self.data.frombytes(data)
 
-    def __getitem__(self, idx: int) -> Any:
+    def __getitem__(self, idx: int | slice) -> Any:
         return self.data[idx]
 
     def __len__(self) -> int:
         return len(self.data)
 
 
-class Ext2Reader:
-    def __init__(self, ext_file: BinaryIO):
-        self._file = ext_file
+# 1. load first superblock
+# 2. load groups (first one for now)
 
-    def _seek(self, offset: int) -> None:
-        self._file.seek(offset)
 
-    def _read(self, size: int, offset: Optional[int] = None) -> bytes:
+class Group:
+    def __init__(
+        self, superblock: SuperBlock, group_desc: BlockGroupDescription, ext_file: BinaryIO
+    ):
+        self.superblock = superblock
+        self.group_desc = group_desc
 
-        if offset is not None:
-            self._seek(offset)
+        self.block_size = block_size = superblock.block_size
+        block_bitmap_offset = group_desc.block_bitmap_id * block_size
+        inode_bitmap_offset = group_desc.inode_bitmap_id * block_size
 
-        logging.debug("reading %d bytes at loc %d", size, self._file.tell())
-        return self._file.read(size)
+        ext_file.seek(block_bitmap_offset)
+        self.block_bitmap = BlockBitmap(ext_file.read(block_size))
 
-    def parse(self) -> None:
-        self.superblock = SuperBlock(self._read(1024, offset=1024))
+        ext_file.seek(inode_bitmap_offset)
+        self.inode_bitmap = InodeBitmap(ext_file.read(block_size))
 
-        assert self.superblock.nb_block_groups == 1
-        # print(self.superblock)
+        inode_table_offset = group_desc.inode_table_id * block_size
+        inode_size = superblock.inode_size
 
-        block_size = self.block_size = self.superblock.block_size
+        inode_blocks_per_group = superblock.inodes_per_group // superblock.inode_table_size
 
-        block_group_desc_table = BlockGroupDescription(self._read(32, offset=block_size))
-
-        inode_size = self.superblock.inode_size
-
-        inode_table_index = block_group_desc_table.inode_table_id
-        block_bitmap_offset = block_size * block_group_desc_table.block_bitmap_id
-        inode_bitmap_offset = block_size * block_group_desc_table.inode_bitmap_id
-        inode_table_offset = block_size * inode_table_index
-
-        inode_table_size = self.superblock.inode_table_size
-        inodes_per_block = int(block_size / inode_size)
-        inode_blocks_per_group = int(self.superblock.inodes_per_group / inodes_per_block)
-
-        logging.debug("Block bitmap offset %d (block)", block_group_desc_table.block_bitmap_id)
-        logging.debug("Inode bitmap offset %d (block)", block_group_desc_table.inode_bitmap_id)
-        logging.debug(
-            "Inode table offset %d-%d (block)",
-            inode_table_index,
-            inode_table_index + inode_blocks_per_group - 1,
-        )
-
-        assert inode_table_size * inodes_per_block == self.superblock.inodes_per_group
-
-        BlockBitmap(self._read(block_size, offset=block_bitmap_offset))
-        inode_bitmap = InodeBitmap(self._read(block_size, offset=inode_bitmap_offset))
-
-        inode_table = {}
-        count = 0
-
+        self.inode_table: dict[int, Inode] = {}
         for i in range(inode_blocks_per_group):
-            ith_block_offset = inode_table_offset + block_size * i
+            ith_block = inode_table_offset + block_size * i
 
-            for j in range(inodes_per_block):
-                count += 1
-                inode_index = i * inodes_per_block + j + 1
+            for j in range(superblock.inode_table_size):
+                inode_index = i * superblock.inode_table_size + j + 1
 
-                if not inode_bitmap[inode_index]:
+                if not self.inode_bitmap[inode_index - 1]:
                     continue
 
-                jth_inode_offset = ith_block_offset + inode_size * j
+                inode_offset = ith_block + j * inode_size
+                ext_file.seek(inode_offset)
+                inode = Inode(ext_file.read(inode_size), superblock.log_block_size)
 
-                inode = Inode(
-                    self._read(inode_size, offset=jth_inode_offset), self.superblock.log_block_size
-                )
-
-                logging.debug("Adding inode with index: %d", inode_index)
-                inode_table[inode_index] = inode
-
-                if inode_index != 2 and inode_index < 11:
+                if inode_index != SuperBlock.EXT2_ROOT_INO and inode_index < superblock.first_inode:
+                    self.inode_table[inode_index] = inode
                     continue
 
                 if inode.is_dir:
@@ -141,29 +117,93 @@ class Ext2Reader:
                             continue
 
                         offset = b * block_size
+                        files: dict[str, DirEntry] = {}
                         while True:
-                            (index, size, name_len, type_) = struct.unpack(
-                                "IHbb", self._read(8, offset=offset)
+                            ext_file.seek(offset)
+                            (index, size, name_len, inode_type) = struct.unpack(
+                                "IHbb", ext_file.read(8)
                             )
                             if index == 0:
                                 break
-                            name = struct.unpack(
-                                f"{name_len}s", self._read(name_len, offset=offset + 8)
-                            )[0]
+
+                            name = struct.unpack(f"{name_len}s", ext_file.read(name_len))[0]
                             offset += size
 
-                            entry = DirEntry(index, type_, name)
+                            entry = DirEntry(index, inode_type)
 
-                            if name not in inode.files:
-                                inode.files[name] = entry
+                            files[name.decode()] = entry
 
-                if inode.is_file:
-                    buffer = bytes()
-                    remaining_size = inode.size
-                    for b in inode.block:
-                        size = min(remaining_size, block_size)
-                        remaining_size -= size
-                        buffer += self._read(size, offset=b * block_size)
-                    inode.raw_data = buffer
+                            # size cannot be greater than 8 (header of dir entry)
+                            #   + 255 (max name length)
+                            if size > 255 + 8 + 1:
+                                break
 
-                self.inode_table = inode_table
+                    inode.set_files(files)
+
+                self.inode_table[inode_index] = inode
+
+
+class Ext2Reader:
+    def __init__(self, file_path: str | Path):
+        self.ext2_file_path = file_path
+
+        with open(file_path, "rb") as ext_file:
+            ext_file.seek(1024)
+            self.superblock = SuperBlock(ext_file.read(1024))
+
+            assert self.superblock.nb_block_groups == 1
+
+            self.block_size = block_size = self.superblock.block_size
+
+            self.group_description_table = []
+            ext_file.seek(block_size)
+            for _ in range(self.superblock.nb_block_groups):
+                self.group_description_table.append(BlockGroupDescription(ext_file.read(32)))
+
+            # XXX: this needs to be fixed if we want to support more than one group
+            self.first_group = Group(self.superblock, self.group_description_table[0], ext_file)
+
+    def _find_inode_for_path(self, path: str) -> Inode:
+        assert path.startswith("/")
+        path_parts = path[1:].split("/")
+        inode = self.first_group.inode_table[SuperBlock.EXT2_ROOT_INO]
+
+        if path_parts[0] == "":
+            return inode
+
+        for path_part in path_parts:
+            assert path_part in inode.files.keys()
+            inode = self.first_group.inode_table[inode.files[path_part].index]
+
+        return inode
+
+    def _read_data_for_inode(self, inode: Inode) -> bytes:
+        remaining_size = inode.size
+        data = bytes()
+
+        assert remaining_size <= self.block_size
+
+        with open(self.ext2_file_path, "rb") as ext_file:
+            for b in inode.block:
+                if b == 0:
+                    break
+
+                ext_file.seek(self.block_size * b)
+                size_to_read = min(remaining_size, self.block_size)
+                remaining_size -= size_to_read
+                data += ext_file.read(size_to_read)
+
+        return data
+
+    def ls_command(self, path: str) -> None:
+        inode = self._find_inode_for_path(path)
+        assert not inode.is_file, "Can only `ls` directory inodes"
+
+        print(list(inode.files.keys()))
+
+    def cat_command(self, path: str) -> None:
+        inode = self._find_inode_for_path(path)
+
+        assert inode.is_file, "Can only `cat` file inodes"
+
+        print(self._read_data_for_inode(inode).decode(), end="")

@@ -1,24 +1,25 @@
 [tool.poetry]
 name = "pyext2"
-version = "0.0.1"
-description = "Simple ext2 implementation"
-
-license = "MIT"
-
-authors = [
-    "Szymon Rams <szymon.rams@icloud.com>"
-]
-
-readme = "README.md"
-
-repository = "https://github.com/szymon/pyext2"
-homepage = "https://github.com/szymon/pyext2"
+version = "0.1.0"
+description = ""
+authors = ["Szymon Rams <szymon.rams@icloud.com>"]
+license = "The Unlicense"
 
 [tool.poetry.dependencies]
 python = "^3.9"
+bitarray = "^2.3.2"
+
+[tool.poetry.dev-dependencies]
+black = { version = "*", allow-prereleases = true }
+isort = "^5.9.3"
+flake8 = "^3.9.2"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line_length = 100
 
 [tool.isort]
 profile = "black"
-
-[tool.black]
-line-length = 100
