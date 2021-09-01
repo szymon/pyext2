@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import enum
+import struct
 
 from .parser import InodeInfo
 
@@ -13,6 +14,7 @@ class DirEntry:
 
 
 class InodeMode(enum.IntFlag):
+    EXT2_S_IFMT = 0b1111000000000000
     EXT2_S_IFSOCK = 0xC000
     EXT2_S_IFLNK = 0xA000
     EXT2_S_IFREG = 0x8000
@@ -99,16 +101,30 @@ class Inode:
         lines.append(f"{self.blocks = }")
         lines.append(f"{self.block = }")
 
-        return "\n    ".join(lines)
+        if self.is_dir and self.files:
+            lines.append("files:")
+            for entry_name, entry_info in self.files.items():
+                lines.append(f"  {entry_name!r}    \t{entry_info}")
+
+        if self.is_link:
+            lines.append(f"soft link pointing to {self.get_link_path()!r}")
+
+        return "\n  ".join(lines)
+
+    def get_link_path(self) -> str:
+        assert self.is_link
+
+        block_as_bytes = struct.pack("15i", *self.block)
+        return block_as_bytes[: block_as_bytes.index(0)].decode()
 
     @property
     def is_file(self) -> bool:
-        return self.mode & InodeMode.EXT2_S_IFREG != 0
+        return self.mode & InodeMode.EXT2_S_IFMT == InodeMode.EXT2_S_IFREG
 
     @property
     def is_dir(self) -> bool:
-        return self.mode & InodeMode.EXT2_S_IFDIR != 0
+        return self.mode & InodeMode.EXT2_S_IFMT == InodeMode.EXT2_S_IFDIR
 
     @property
     def is_link(self) -> bool:
-        return self.mode & InodeMode.EXT2_S_IFLNK != 0
+        return self.mode & InodeMode.EXT2_S_IFMT == InodeMode.EXT2_S_IFLNK

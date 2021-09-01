@@ -23,6 +23,7 @@ def main() -> Ext2Reader:
     inode_info_parser = parsers.add_parser("inode_info")
     inode_info_parser.add_argument("--path", type=str)
     inode_info_parser.add_argument("--index", type=int)
+    inode_info_parser.add_argument("--follow_links", type=bool, default=False)
 
     args = parser.parse_args(sys.argv[1:])
 

@@ -162,18 +162,28 @@ class Ext2Reader:
 
             # XXX: this needs to be fixed if we want to support more than one group
             self.first_group = Group(self.superblock, self.group_description_table[0], ext_file)
+            self.root_inode = self.first_group.inode_table[SuperBlock.EXT2_ROOT_INO]
 
-    def _find_inode_for_path(self, path: str) -> Inode:
-        assert path.startswith("/")
-        path_parts = path[1:].split("/")
-        inode = self.first_group.inode_table[SuperBlock.EXT2_ROOT_INO]
+    def _find_inode_for_path(self, inode: Inode, path: str, *, follow_links: bool = False) -> Inode:
+        if path.startswith("/"):
+            path = path[1:]
+
+        path_parts = path.split("/")
+        parent_inode = None
 
         if path_parts[0] == "":
             return inode
 
         for path_part in path_parts:
-            assert path_part in inode.files.keys()
+            assert path_part in inode.files.keys(), f"{path_part = } {inode.files.keys() = }"
+            parent_inode = inode
             inode = self.first_group.inode_table[inode.files[path_part].index]
+
+            if inode.is_link and follow_links:
+                link_path = inode.get_link_path()
+                inode = self._find_inode_for_path(
+                    parent_inode, link_path, follow_links=follow_links
+                )
 
         return inode
 
@@ -196,25 +206,25 @@ class Ext2Reader:
         return data
 
     def ls_command(self, path: str) -> None:
-        inode = self._find_inode_for_path(path)
+        inode = self._find_inode_for_path(self.root_inode, path, follow_links=True)
         assert not inode.is_file, "Can only `ls` directory inodes"
 
         print(list(inode.files.keys()))
 
     def cat_command(self, path: str) -> None:
-        inode = self._find_inode_for_path(path)
+        inode = self._find_inode_for_path(self.root_inode, path, follow_links=True)
 
         assert inode.is_file, "Can only `cat` file inodes"
 
         print(self._read_data_for_inode(inode).decode(), end="")
 
     def inode_info_command(
-        self, *, path: Optional[str] = None, index: Optional[int] = None
+        self, *, path: Optional[str] = None, index: Optional[int] = None, follow_links: bool = False
     ) -> None:
         assert path is None or index is None
 
         if path is not None:
-            inode = self._find_inode_for_path(path)
+            inode = self._find_inode_for_path(self.root_inode, path, follow_links=follow_links)
         else:
             assert index is not None
             inode = self.first_group.inode_table[index]
