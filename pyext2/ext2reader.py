@@ -205,6 +205,9 @@ class Ext2Reader:
 
         return data
 
+    def aa(self):
+        print(self)
+
     def ls_command(self, path: str) -> None:
         inode = self._find_inode_for_path(self.root_inode, path, follow_links=True)
         assert not inode.is_file, "Can only `ls` directory inodes"
